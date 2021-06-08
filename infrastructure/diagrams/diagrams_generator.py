@@ -4,11 +4,11 @@ from functools import wraps
 from diagrams import Diagram, Cluster, Edge
 from diagrams.aws.database import Dynamodb
 from diagrams.aws.integration import SQS
-from diagrams.aws.compute import ECS, LambdaFunction
+from diagrams.aws.compute import LambdaFunction
 
 
 with open(
-    "/home/artem/test/diagrams_pulumi_test/infrastructure/src/stack.json"
+    "../src/stack.json"
 ) as json_file:
     pulumi_stack = json.load(json_file)
 
@@ -27,36 +27,39 @@ def loop_resources(pulumi_stack: dict):
 
 connection_nodes = {"dynamodb": Dynamodb, "sqs": SQS}
 
+nodes_with_connection = []
 
 @loop_resources(pulumi_stack)
-def create_connection(resource, lambda_id, lambda_function_node):
-    if (
-        resource["type"] == "aws:lambda/eventSourceMapping:EventSourceMapping"
-        and lambda_id == resource["inputs"]["functionName"]
-    ):
+def create_connection(resource):
+    for node in nodes_with_connection:
+        if (
+            resource["type"] == "aws:lambda/eventSourceMapping:EventSourceMapping"
+            and node[0] == resource["inputs"]["functionName"]
+        ):
 
-        connection_nodes.get(resource["inputs"]["eventSourceArn"].split(":")[2])(
-            resource["propertyDependencies"]["eventSourceArn"][0].split("::")[-1]
-        ) >> Edge(
-            style="dotted", label=resource["urn"].split("::")[-1]
-        ) >> lambda_function_node
+            connection_nodes.get(resource["inputs"]["eventSourceArn"].split(":")[2])(
+                resource["propertyDependencies"]["eventSourceArn"][0].split("::")[-1]
+            ) >> Edge(
+                style="dotted", label=resource["urn"].split("::")[-1]
+            ) >> node[1]
 
 
 @loop_resources(pulumi_stack)
-def create_lambda_function(resource, subnet_id):
+def create_resource(resource, subnet_id):
     if (
         resource["type"] == "aws:lambda/function:Function"
         and subnet_id in resource["inputs"]["vpcConfig"]["subnetIds"]
     ):
         lambda_function = LambdaFunction(f"{resource['id']}")
-        create_connection(resource["id"], lambda_function)
+        global nodes_with_connection
+        nodes_with_connection.append((resource['id'], lambda_function))
 
 
 @loop_resources(pulumi_stack)
 def create_subnet(resource):
     if resource["type"] == "aws:ec2/subnet:Subnet":
         with Cluster(f"Subnet {resource['id']}"):
-            create_lambda_function(subnet_id=resource["id"])
+            create_resource(subnet_id=resource["id"])
 
 
 @loop_resources(pulumi_stack)
@@ -68,7 +71,8 @@ def create_vpc(resource):
 
 def create_pulumi_diagram():
     create_vpc()
+    create_connection()
 
 
-with Diagram("main diagrams"):
+with Diagram("Pulumi stack based diagram"):
     create_pulumi_diagram()
